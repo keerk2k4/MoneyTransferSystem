@@ -46,6 +46,11 @@ public class TransactionLog {
 		this.id = id;
 	}
 
+	public TransactionLog() {
+    // required by JPA/Hibernate
+}
+
+
 
 	public TransactionLog(Long fromAccountId, Long toAccountId, BigDecimal amount, TransactionStatus status) {
 		super();
