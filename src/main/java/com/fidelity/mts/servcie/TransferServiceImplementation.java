@@ -25,6 +25,8 @@ public class TransferServiceImplementation implements TransferService{
 	AccountRepo repo;
 	@Autowired
 	TransactionLogRepo logrepo;
+	@Autowired
+	RewardService rewardService;
 	
 	@Override
 	public TransferResponse transferMoney(TransferRequest transferRequest) {
@@ -74,6 +76,27 @@ public class TransferServiceImplementation implements TransferService{
 	    repo.save(fromAcc);
 		repo.save(toAcc);
 		logrepo.save(log);
+		
+		// Initialize reward points if not present
+		if (!rewardService.hasRewardPoints(transferRequest.getFromId())) {
+			rewardService.initializeRewardPoints(transferRequest.getFromId());
+		}
+		if (!rewardService.hasRewardPoints(transferRequest.getToId())) {
+			rewardService.initializeRewardPoints(transferRequest.getToId());
+		}
+		
+		// Record reward points for successful transfer
+		try {
+			rewardService.recordReward(
+				transferRequest.getFromId(),
+				transferRequest.getToId(),
+				transferRequest.getAmount(),
+				log.getId()
+			);
+		} catch (Exception e) {
+			// Log the error but don't fail the transfer
+			System.err.println("Failed to record reward points: " + e.getMessage());
+		}
 			
 		TransferResponse response = new TransferResponse(
 				log.getId(),log.getStatus(),"Successfull",log.getFromAccountId(),log.getToAccountId(),log.getAmount());

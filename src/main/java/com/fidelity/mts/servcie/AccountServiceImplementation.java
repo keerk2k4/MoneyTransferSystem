@@ -15,11 +15,20 @@ import com.fidelity.mts.repo.AccountRepo;
 public class AccountServiceImplementation implements AccountService{
 	
 	@Autowired AccountRepo repo;
+	@Autowired RewardService rewardService;
 	
 	@Override
 	public String addAccount(Account act)
 	{
-		repo.save(act);
+		Account savedAccount = repo.save(act);
+		
+		// Initialize reward points for new account
+		try {
+			rewardService.initializeRewardPoints(savedAccount.getId());
+		} catch (Exception e) {
+			System.err.println("Failed to initialize reward points for account " + savedAccount.getId() + ": " + e.getMessage());
+		}
+		
 		return "Added Account with id: "+act.getId();
 	}
 	
