@@ -17,6 +17,7 @@ import com.fidelity.mts.servcie.AccountService;
 
 @RestController
 @RequestMapping("/api/v1/account")
+@CrossOrigin(origins = "*") 
 public class AccountController {
 	
 	@Autowired 
