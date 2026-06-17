@@ -1,7 +1,6 @@
 package com.fidelity.mts.servcie;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,46 +34,46 @@ public class TransferServiceImplementation implements TransferService {
 	@Transactional
 	public TransferResponse transferMoney(TransferRequest transferRequest) {
 
-		// FR-05 Idempotency: generate one if the client didn't supply
+		// FR-05: resolve idempotency key
 		String idempotencyKey = transferRequest.getIdempotencyKey();
 		if (idempotencyKey == null || idempotencyKey.isBlank()) {
 			idempotencyKey = UUID.randomUUID().toString();
 		}
 
-		// If we've already processed this exact request, return the previous result
+		// FR-05: check for duplicate
 		Optional<TransactionLog> existing = logrepo.findByIdempotencyKey(idempotencyKey);
 		if (existing.isPresent()) {
 			TransactionLog prior = existing.get();
 			if (prior.getStatus() == TransactionStatus.SUCCESS) {
 				return new TransferResponse(
-						prior.getId(), prior.getStatus(), "Duplicate request returned previous result",
+						prior.getId(), prior.getStatus(), "Duplicate — returning previous result",
 						prior.getFromAccountId(), prior.getToAccountId(), prior.getAmount());
 			}
 			throw new DuplicateTransferException();
 		}
 
-		// Business rule #1: source != destination
+		// BR-1: source != destination
 		if (transferRequest.getFromId() != null
 				&& transferRequest.getFromId().equals(transferRequest.getToId())) {
 			throw new IllegalArgumentException("Source and destination accounts must be different");
 		}
 
-		// Business rule #6: amount > 0
+		// BR-6: amount > 0
 		if (transferRequest.getAmount() == null
 				|| transferRequest.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
 			throw new IllegalArgumentException("Amount must be greater than zero");
 		}
 
-		// Prepare the log record (will be saved at the end with final status)
+		// Prepare log (constructor sets createdOn and a default idempotencyKey)
 		TransactionLog log = new TransactionLog(
 				transferRequest.getFromId(),
 				transferRequest.getToId(),
 				transferRequest.getAmount(),
 				TransactionStatus.SUCCESS);
+		// Override idempotencyKey with the resolved one
 		log.setIdempotencyKey(idempotencyKey);
-		log.setCreatedOn(Instant.now());
 
-		// Business rule #2: source must exist
+		// BR-2: source must exist
 		Account fromAcc;
 		try {
 			fromAcc = accountService.findById(transferRequest.getFromId());
@@ -83,13 +82,13 @@ public class TransferServiceImplementation implements TransferService {
 			throw new AccountNotFoundException();
 		}
 
-		// Business rule #4: source must be ACTIVE
+		// BR-4: source must be ACTIVE
 		if (fromAcc.getStatus() != AccountStatus.ACTIVE) {
 			recordFailure(log, "ACC-403 Source account not active");
 			throw new AccountNotActiveException();
 		}
 
-		// Business rule #3: destination must exist
+		// BR-3: destination must exist
 		Account toAcc;
 		try {
 			toAcc = accountService.findById(transferRequest.getToId());
@@ -98,25 +97,25 @@ public class TransferServiceImplementation implements TransferService {
 			throw new AccountNotFoundException();
 		}
 
-		// Business rule #5: destination must be ACTIVE
+		// BR-5: destination must be ACTIVE
 		if (toAcc.getStatus() != AccountStatus.ACTIVE) {
 			recordFailure(log, "ACC-403 Destination account not active");
 			throw new AccountNotActiveException();
 		}
 
-		// Business rule #7: sufficient balance
+		// BR-7: sufficient balance
 		if (fromAcc.getBalance().compareTo(transferRequest.getAmount()) < 0) {
 			recordFailure(log, "TRX-400 Insufficient funds");
 			throw new InsufficientBalanceException();
 		}
 
-		// Business rule #9: debit BEFORE credit
+		// BR-9: debit BEFORE credit
 		accountService.debit(fromAcc, transferRequest.getAmount());
 		accountService.credit(toAcc, transferRequest.getAmount());
 		repo.save(fromAcc);
 		repo.save(toAcc);
 
-		// Business rule #10: log the transfer
+		// BR-10: log the transfer
 		log.setStatus(TransactionStatus.SUCCESS);
 		logrepo.save(log);
 
@@ -145,11 +144,7 @@ public class TransferServiceImplementation implements TransferService {
 	private void recordFailure(TransactionLog log, String reason) {
 		log.setStatus(TransactionStatus.FAILED);
 		log.setFailureReason(reason);
-		try {
-			logrepo.save(log);
-		} catch (Exception ignored) {
-			// Don't mask the original error
-		}
+		try { logrepo.save(log); } catch (Exception ignored) { }
 	}
 
 	@Override

@@ -1,12 +1,21 @@
 package com.fidelity.mts.dto;
 
 import java.math.BigDecimal;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 public class TransferRequest {
 
+	@NotNull(message = "Source account ID is required")
 	private Long fromId;
+
+	@NotNull(message = "Destination account ID is required")
 	private Long toId;
+
+	@NotNull(message = "Amount is required")
+	@Positive(message = "Amount must be greater than zero")
 	private BigDecimal amount;
+
 	private String idempotencyKey;
 
 	public Long getFromId() { return fromId; }

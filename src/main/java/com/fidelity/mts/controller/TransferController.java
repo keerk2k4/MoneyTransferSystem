@@ -15,6 +15,7 @@ import com.fidelity.mts.dto.TransferRequest;
 import com.fidelity.mts.dto.TransferResponse;
 import com.fidelity.mts.servcie.TransferService;
 import com.fidelity.mts.entity.TransactionLog;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/v1/transfers")
@@ -24,19 +25,11 @@ public class TransferController {
 	@Autowired
 	TransferService service;
 
-	/**
-	 * POST /api/v1/transfers
-	 * Initiates a fund transfer between two accounts.
-	 */
 	@PostMapping
-	public ResponseEntity<TransferResponse> transferMoney(@RequestBody TransferRequest transferRequest) {
+	public ResponseEntity<TransferResponse> transferMoney(@Valid @RequestBody TransferRequest transferRequest) {
 		return ResponseEntity.status(HttpStatus.OK).body(service.transferMoney(transferRequest));
 	}
 
-	/**
-	 * GET /api/v1/transfers/{id}/transactions
-	 * Returns transaction history for the given account (sent + received).
-	 */
 	@GetMapping("/{id}/transactions")
 	public ResponseEntity<List<TransactionLog>> getTransactions(@PathVariable Long id) {
 		return ResponseEntity.status(HttpStatus.OK).body(service.getTransaction(id));
