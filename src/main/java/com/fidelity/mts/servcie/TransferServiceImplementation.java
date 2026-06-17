@@ -1,9 +1,15 @@
 package com.fidelity.mts.servcie;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.fidelity.mts.dto.TransferRequest;
 import com.fidelity.mts.dto.TransferResponse;
 import com.fidelity.mts.entity.Account;
@@ -12,111 +18,152 @@ import com.fidelity.mts.enums.AccountStatus;
 import com.fidelity.mts.enums.TransactionStatus;
 import com.fidelity.mts.exception.AccountNotActiveException;
 import com.fidelity.mts.exception.AccountNotFoundException;
+import com.fidelity.mts.exception.DuplicateTransferException;
 import com.fidelity.mts.exception.InsufficientBalanceException;
 import com.fidelity.mts.repo.AccountRepo;
 import com.fidelity.mts.repo.TransactionLogRepo;
 
 @Service
-public class TransferServiceImplementation implements TransferService{
-	
-	@Autowired
-	AccountService accountService;
-	@Autowired 
-	AccountRepo repo;
-	@Autowired
-	TransactionLogRepo logrepo;
-	@Autowired
-	RewardService rewardService;
-	
-	@Override
-	public TransferResponse transferMoney(TransferRequest transferRequest) {
-		
-		TransactionLog log = new TransactionLog(transferRequest.getFromId(),transferRequest.getToId(),transferRequest.getAmount(),TransactionStatus.SUCCESS );
-		
-	    Account fromAcc = accountService.findById(transferRequest.getFromId());
-	    if (fromAcc == null) {
-	        throw new AccountNotFoundException();
-	    }
-	    
-	    if(fromAcc.getStatus()!= AccountStatus.ACTIVE) {
-	    	log.setStatus(TransactionStatus.FAILED);
-	    	log.setFailureReason("ACC-403 Account not Active");
-	    	logrepo.save(log);
-	    	throw new AccountNotActiveException();
-	    }
-	    
-	    Account toAcc = accountService.findById(transferRequest.getToId());
-	    
-	    if (toAcc == null) {
-	        throw new AccountNotFoundException();
-	    }
-	    
-	    if(toAcc.getStatus()!= AccountStatus.ACTIVE) {
-	    	log.setStatus(TransactionStatus.FAILED);
-	    	log.setFailureReason("ACC-403 Account not Active");
-	    	logrepo.save(log);
-	    	throw new AccountNotActiveException();
-	    }
-	    
-	    logrepo.save(log);
+public class TransferServiceImplementation implements TransferService {
 
-		BigDecimal balance = fromAcc.getBalance();
-		BigDecimal amount  = transferRequest.getAmount();
-		
-		if (balance.compareTo(amount) < 0) {
-			log.setStatus(TransactionStatus.FAILED);
-	    	log.setFailureReason("TRX-400 Insufficient Funds.");
-	    	logrepo.save(log);
-		    throw new InsufficientBalanceException();
+	@Autowired AccountService accountService;
+	@Autowired AccountRepo repo;
+	@Autowired TransactionLogRepo logrepo;
+	@Autowired RewardService rewardService;
+
+	@Override
+	@Transactional
+	public TransferResponse transferMoney(TransferRequest transferRequest) {
+
+		// FR-05 Idempotency: generate one if the client didn't supply
+		String idempotencyKey = transferRequest.getIdempotencyKey();
+		if (idempotencyKey == null || idempotencyKey.isBlank()) {
+			idempotencyKey = UUID.randomUUID().toString();
 		}
-	
-	    accountService.debit(fromAcc, transferRequest.getAmount());
-	    accountService.credit(toAcc, transferRequest.getAmount());
-			
-	    repo.save(fromAcc);
+
+		// If we've already processed this exact request, return the previous result
+		Optional<TransactionLog> existing = logrepo.findByIdempotencyKey(idempotencyKey);
+		if (existing.isPresent()) {
+			TransactionLog prior = existing.get();
+			if (prior.getStatus() == TransactionStatus.SUCCESS) {
+				return new TransferResponse(
+						prior.getId(), prior.getStatus(), "Duplicate request returned previous result",
+						prior.getFromAccountId(), prior.getToAccountId(), prior.getAmount());
+			}
+			throw new DuplicateTransferException();
+		}
+
+		// Business rule #1: source != destination
+		if (transferRequest.getFromId() != null
+				&& transferRequest.getFromId().equals(transferRequest.getToId())) {
+			throw new IllegalArgumentException("Source and destination accounts must be different");
+		}
+
+		// Business rule #6: amount > 0
+		if (transferRequest.getAmount() == null
+				|| transferRequest.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+			throw new IllegalArgumentException("Amount must be greater than zero");
+		}
+
+		// Prepare the log record (will be saved at the end with final status)
+		TransactionLog log = new TransactionLog(
+				transferRequest.getFromId(),
+				transferRequest.getToId(),
+				transferRequest.getAmount(),
+				TransactionStatus.SUCCESS);
+		log.setIdempotencyKey(idempotencyKey);
+		log.setCreatedOn(Instant.now());
+
+		// Business rule #2: source must exist
+		Account fromAcc;
+		try {
+			fromAcc = accountService.findById(transferRequest.getFromId());
+		} catch (Exception e) {
+			recordFailure(log, "ACC-404 Source account not found");
+			throw new AccountNotFoundException();
+		}
+
+		// Business rule #4: source must be ACTIVE
+		if (fromAcc.getStatus() != AccountStatus.ACTIVE) {
+			recordFailure(log, "ACC-403 Source account not active");
+			throw new AccountNotActiveException();
+		}
+
+		// Business rule #3: destination must exist
+		Account toAcc;
+		try {
+			toAcc = accountService.findById(transferRequest.getToId());
+		} catch (Exception e) {
+			recordFailure(log, "ACC-404 Destination account not found");
+			throw new AccountNotFoundException();
+		}
+
+		// Business rule #5: destination must be ACTIVE
+		if (toAcc.getStatus() != AccountStatus.ACTIVE) {
+			recordFailure(log, "ACC-403 Destination account not active");
+			throw new AccountNotActiveException();
+		}
+
+		// Business rule #7: sufficient balance
+		if (fromAcc.getBalance().compareTo(transferRequest.getAmount()) < 0) {
+			recordFailure(log, "TRX-400 Insufficient funds");
+			throw new InsufficientBalanceException();
+		}
+
+		// Business rule #9: debit BEFORE credit
+		accountService.debit(fromAcc, transferRequest.getAmount());
+		accountService.credit(toAcc, transferRequest.getAmount());
+		repo.save(fromAcc);
 		repo.save(toAcc);
+
+		// Business rule #10: log the transfer
+		log.setStatus(TransactionStatus.SUCCESS);
 		logrepo.save(log);
-		
-		// Initialize reward points if not present
+
+		// Rewards
 		if (!rewardService.hasRewardPoints(transferRequest.getFromId())) {
 			rewardService.initializeRewardPoints(transferRequest.getFromId());
 		}
 		if (!rewardService.hasRewardPoints(transferRequest.getToId())) {
 			rewardService.initializeRewardPoints(transferRequest.getToId());
 		}
-		
-		// Record reward points for successful transfer
 		try {
 			rewardService.recordReward(
-				transferRequest.getFromId(),
-				transferRequest.getToId(),
-				transferRequest.getAmount(),
-				log.getId()
-			);
+					transferRequest.getFromId(),
+					transferRequest.getToId(),
+					transferRequest.getAmount(),
+					log.getId());
 		} catch (Exception e) {
-			// Log the error but don't fail the transfer
 			System.err.println("Failed to record reward points: " + e.getMessage());
 		}
-			
-		TransferResponse response = new TransferResponse(
-				log.getId(),log.getStatus(),"Successfull",log.getFromAccountId(),log.getToAccountId(),log.getAmount());
-		return response;
-			
+
+		return new TransferResponse(
+				log.getId(), log.getStatus(), "Transfer completed",
+				log.getFromAccountId(), log.getToAccountId(), log.getAmount());
+	}
+
+	private void recordFailure(TransactionLog log, String reason) {
+		log.setStatus(TransactionStatus.FAILED);
+		log.setFailureReason(reason);
+		try {
+			logrepo.save(log);
+		} catch (Exception ignored) {
+			// Don't mask the original error
 		}
-	
-    @Override
-    public List<TransactionLog> getTransaction(Long id){
-        return logrepo.findByFromAccountIdOrToAccountId(id, id);
-    }
+	}
 
-    @Override
-    public List<TransactionLog> findByFromAccountId(Long id) {
-	   return logrepo.findByFromAccountId(id);
-    }
+	@Override
+	public List<TransactionLog> getTransaction(Long id) {
+		return logrepo.findByFromAccountIdOrToAccountId(id, id);
+	}
 
-    @Override
-    public List<TransactionLog> findByToAccountId(Long id) {
-	  return logrepo.findByToAccountId(id);
-    }
+	@Override
+	public List<TransactionLog> findByFromAccountId(Long id) {
+		return logrepo.findByFromAccountId(id);
+	}
 
+	@Override
+	public List<TransactionLog> findByToAccountId(Long id) {
+		return logrepo.findByToAccountId(id);
+	}
 }
