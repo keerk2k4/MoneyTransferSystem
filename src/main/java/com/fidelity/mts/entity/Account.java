@@ -4,6 +4,8 @@ import com.fidelity.mts.enums.AccountStatus;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.EnumType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -25,8 +27,9 @@ public class Account {
 	@Column
 	private BigDecimal balance = BigDecimal.ZERO;
 
-	@Column
-	private AccountStatus status = AccountStatus.ACTIVE;
+	@Enumerated(EnumType.STRING)
+@Column
+private AccountStatus status = AccountStatus.ACTIVE;
 
 	@Version
 	private Integer version;

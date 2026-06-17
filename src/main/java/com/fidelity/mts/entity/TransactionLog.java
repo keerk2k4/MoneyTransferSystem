@@ -5,16 +5,21 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
+
+import org.hibernate.annotations.UuidGenerator;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
 @Entity
 public class TransactionLog {
-
-    @Id
-    @GeneratedValue
-    private UUID id;
+	@Id
+	@GeneratedValue
+	@UuidGenerator
+	@Column(columnDefinition = "BINARY(16)", nullable = false, updatable = false)
+	@org.hibernate.annotations.JdbcTypeCode(java.sql.Types.BINARY)
+	private UUID id;
 
     @Column(nullable = false)
     private Long fromAccountId;

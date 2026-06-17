@@ -1,6 +1,7 @@
 package com.fidelity.mts.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.UuidGenerator;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -14,8 +15,10 @@ import java.util.UUID;
 public class RewardTransaction {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id")
+    @GeneratedValue
+    @UuidGenerator
+    @org.hibernate.annotations.JdbcTypeCode(java.sql.Types.BINARY)
+    @Column(name = "id", columnDefinition = "BINARY(16)", nullable = false, updatable = false)
     private UUID id;
 
     @Column(name = "from_account_id", nullable = false)
@@ -30,8 +33,9 @@ public class RewardTransaction {
     @Column(name = "points_earned", nullable = false)
     private Long pointsEarned;
 
-    @Column(name = "related_transaction_id", nullable = false)
-    private UUID relatedTransactionId; // References TransactionLog ID
+    @org.hibernate.annotations.JdbcTypeCode(java.sql.Types.BINARY)
+    @Column(name = "related_transaction_id", columnDefinition = "BINARY(16)", nullable = false)
+    private UUID relatedTransactionId;
 
     @Column(name = "created_on", nullable = false)
     private Instant createdOn;
