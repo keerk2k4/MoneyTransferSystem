@@ -24,6 +24,9 @@ public class Account {
 	@Column(length = 40)
 	private String holderName;
 
+	@Column(length = 255)
+	private String password;        // BCrypt encoded password
+
 	@Column
 	private BigDecimal balance = BigDecimal.ZERO;
 
@@ -46,6 +49,9 @@ private AccountStatus status = AccountStatus.ACTIVE;
 
 	public String getHolderName() { return holderName; }
 	public void setHolderName(String holderName) { this.holderName = holderName; }
+
+	public String getPassword() { return password; }
+	public void setPassword(String password) { this.password = password; }
 
 	public BigDecimal getBalance() { return balance; }
 	public void setBalance(BigDecimal balance) { this.balance = balance; }
